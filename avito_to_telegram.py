@@ -1,6 +1,7 @@
 import logging
 import requests
 import time
+import os
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
 import asyncio
@@ -19,12 +20,17 @@ logging.basicConfig(
     ]
 )
 
-# Конфигурация
-AVITO_CLIENT_ID = 'UE2QriOio1bcijMi_cCb'
-AVITO_CLIENT_SECRET = 'GOemk2OjkNw4yGbiupe1H8S1NziOJm7C3Ny4N0Ey'
-AVITO_USER_ID = '353502036'
-TELEGRAM_TOKEN = '8175120945:AAFmd54-AxATZ7IMbAJWZ-VE7ndVT2KxkPY'
-TELEGRAM_CHAT_ID = '-4965100379'
+# Конфигурация из переменных окружения
+AVITO_CLIENT_ID = os.getenv('AVITO_CLIENT_ID')
+AVITO_CLIENT_SECRET = os.getenv('AVITO_CLIENT_SECRET')
+AVITO_USER_ID = os.getenv('AVITO_USER_ID')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
+# Проверка наличия переменных
+if not all([AVITO_CLIENT_ID, AVITO_CLIENT_SECRET, AVITO_USER_ID, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID]):
+    logging.error("Не все переменные окружения заданы")
+    exit(1)
 
 # Хранилище для уникальных сообщений
 processed_messages = set()
@@ -37,7 +43,7 @@ def send_to_telegram(bot, message_data, is_system=False):
             bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
             logging.info(f"Системное сообщение отправлено: {text}")
             return
-
+        
         moscow_tz = pytz.timezone('Europe/Moscow')
         message_time = datetime.fromtimestamp(message_data['timestamp'], moscow_tz)
         formatted_time = message_time.strftime('%H:%M')
@@ -46,29 +52,30 @@ def send_to_telegram(bot, message_data, is_system=False):
         item_id = message_data.get('item_id', 'unknown')
         message_id = message_data.get('message_id', 'unknown')
         logging.info(f"Формирование сообщения: user_id={user_id}, public_key={public_key}, item_id={item_id}, message_id={message_id}")
-
+        
         if message_id in processed_messages:
             logging.info(f"Сообщение {message_id} уже обработано, пропускаем")
             return
-
+        
         processed_messages.add(message_id)
-
+        
         user_link = f"<a href=\"https://www.avito.ru/brands/i121955125\">{message_data['sender']}</a>"
         item_link = f"<a href=\"https://www.avito.ru/{item_id}\">{message_data['item_title']}</a>" if item_id != 'unknown' and item_id.isdigit() else message_data['item_title']
         text = (
+            f"Получено сообщение:\n"
             f"Аккаунт: Мой ноутбук\n"
             f"👤 Покупатель: {user_link}\n"
             f"📌 Объявление: {item_link}\n"
             f"💬 Сообщение: «{message_data['text']}»\n"
-            f"🕒 Время: {formatted_time} "
+            f"🕒 Время: {formatted_time} (по Москве)"
         )
-
+        
         keyboard = [
             [InlineKeyboardButton("Ответить", callback_data=f"reply_{message_data['chat_id']}")],
             [InlineKeyboardButton("История переписки", callback_data=f"history_{message_data['chat_id']}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
+        
         bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=text,
@@ -100,7 +107,7 @@ def get_avito_token():
 
 # Получение новых сообщений с Авито
 def get_avito_messages(token, last_timestamp):
-    url = f'https://api.avito.ru/messenger/v2/accounts/{AVITO_USER_ID}/chats'  # Обновлено на v3
+    url = f'https://api.avito.ru/messenger/v3/accounts/{AVITO_USER_ID}/chats'
     headers = {'Authorization': f'Bearer {token}'}
     try:
         response = requests.get(url, headers=headers, timeout=30)
@@ -141,7 +148,7 @@ def get_avito_messages(token, last_timestamp):
 
 # Получение истории сообщений в чате Авито
 def get_avito_chat_history(token, chat_id):
-    url = f'https://api.avito.ru/messenger/v3/accounts/{AVITO_USER_ID}/chats/{chat_id}/messages'  # Обновлено на v3
+    url = f'https://api.avito.ru/messenger/v3/accounts/{AVITO_USER_ID}/chats/{chat_id}/messages'
     headers = {'Authorization': f'Bearer {token}'}
     try:
         response = requests.get(url, headers=headers, timeout=30)
@@ -171,7 +178,7 @@ def get_avito_chat_history(token, chat_id):
 
 # Отправка ответа на Авито
 async def send_avito_message(token, chat_id, message):
-    url = f'https://api.avito.ru/messenger/v1/accounts/{AVITO_USER_ID}/chats/{chat_id}/messages'  # Обновлено на v3
+    url = f'https://api.avito.ru/messenger/v1/accounts/{AVITO_USER_ID}/chats/{chat_id}/messages'
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
     data = {'type': 'text', 'message': message}
     try:
@@ -245,7 +252,7 @@ def button_callback(update, context):
     query.answer()
     data = query.data
     chat_id = data.split('_')[1]
-
+    
     if data.startswith('reply_'):
         logging.info(f"Кнопка 'Ответить' нажата для чата {chat_id}")
         query.message.reply_text(
@@ -272,12 +279,12 @@ def main():
     bot = Bot(token=TELEGRAM_TOKEN)
     updater = Updater(TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
-
+    
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("reply", reply))
     dp.add_handler(CommandHandler("history", history))
     dp.add_handler(CallbackQueryHandler(button_callback, pattern='^(reply_|history_)'))
-
+    
     try:
         updater.start_polling()
         logging.info("Бот Telegram запущен в режиме polling")
