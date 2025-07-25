@@ -16,6 +16,74 @@ import pytz
 import signal
 import sys
 
+# ... (импорты в начале)
+from flask import Flask, jsonify
+import threading
+
+app = Flask(__name__)
+
+@app.route('/health')
+def health_check():
+    return jsonify(status="ok"), 200
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+# ... (остальной код)
+
+def get_avito_messages(token, last_timestamp):
+    url = f'https://api.avito.ru/messenger/v1/accounts/{AVITO_USER_ID}/chats'  # v3 → v1
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Accept': 'application/vnd.avito.messenger+json; version=1'
+    }
+    # ... (остальной код)
+
+def get_avito_chat_history(token, chat_id):
+    url = f'https://api.avito.ru/messenger/v1/accounts/{AVITO_USER_ID}/chats/{chat_id}/messages'  # v3 → v1
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Accept': 'application/vnd.avito.messenger+json; version=1'
+    }
+    
+    full_history = []
+    page = 1
+    per_page = 50
+    
+    while True:
+        params = {'page': page, 'per_page': per_page}
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=30)
+            if response.status_code != 200:
+                logging.error(f"Ошибка API Авито: {response.status_code} - {response.text}")
+                break
+                
+            data = response.json()
+            messages = data.get('data', {}).get('messages', [])
+            if not messages:
+                break
+                
+            for msg in messages:
+                # ... (обработка сообщения)
+                full_history.append({...})
+                
+            if len(messages) < per_page:
+                break
+                
+            page += 1
+        except Exception as e:
+            logging.error(f"Ошибка: {e}")
+            break
+            
+    return full_history
+
+async def main() -> None:
+    # Запуск Flask сервера
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # ... (остальной код)
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
