@@ -2,20 +2,25 @@ import logging
 import requests
 import time
 import os
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+)
 import asyncio
 import aiohttp
 from datetime import datetime
 import pytz
-from telegram.error import Conflict
+import signal
+import sys
 
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('avito_log.txt'),
         logging.StreamHandler()
     ]
 )
@@ -36,11 +41,11 @@ if not all([AVITO_CLIENT_ID, AVITO_CLIENT_SECRET, AVITO_USER_ID, TELEGRAM_TOKEN,
 processed_messages = set()
 
 # Функция для отправки сообщений в Telegram
-def send_to_telegram(bot, message_data, is_system=False):
+async def send_to_telegram(bot, message_data, is_system=False):
     try:
         if is_system:
             text = f"Системное уведомление: {message_data['text']}"
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text)
             logging.info(f"Системное сообщение отправлено: {text}")
             return
         
@@ -76,7 +81,7 @@ def send_to_telegram(bot, message_data, is_system=False):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        bot.send_message(
+        await bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=text,
             reply_markup=reply_markup,
@@ -196,39 +201,36 @@ async def send_avito_message(token, chat_id, message):
         return False
 
 # Обработчики команд
-def start(update, context):
-    update.message.reply_text('Бот запущен! Ожидаю сообщений с Авито.')
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text('Бот запущен! Ожидаю сообщений с Авито.')
     logging.info("Команда /start выполнена")
 
-def reply(update, context):
+async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         args = context.args
         if len(args) < 2:
-            update.message.reply_text('Использование: /reply <chat_id> <сообщение>')
+            await update.message.reply_text('Использование: /reply <chat_id> <сообщение>')
             return
         chat_id = args[0]
         message = ' '.join(args[1:])
         token = get_avito_token()
         if token:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            success = loop.run_until_complete(send_avito_message(token, chat_id, message))
-            loop.close()
+            success = await send_avito_message(token, chat_id, message)
             if success:
-                update.message.reply_text(f'Ответ отправлен в чат {chat_id}: {message}')
+                await update.message.reply_text(f'Ответ отправлен в чат {chat_id}: {message}')
             else:
-                update.message.reply_text('Ошибка при отправке ответа на Авито. Проверьте лог.')
+                await update.message.reply_text('Ошибка при отправке ответа на Авито. Проверьте лог.')
         else:
-            update.message.reply_text('Не удалось получить токен Авито.')
+            await update.message.reply_text('Не удалось получить токен Авито.')
     except Exception as e:
         logging.error(f"Ошибка в команде /reply: {e}")
-        update.message.reply_text(f'Ошибка: {e}')
+        await update.message.reply_text(f'Ошибка: {e}')
 
-def history(update, context):
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         args = context.args
         if len(args) != 1:
-            update.message.reply_text('Использование: /history <chat_id>')
+            await update.message.reply_text('Использование: /history <chat_id>')
             return
         chat_id = args[0]
         token = get_avito_token()
@@ -238,24 +240,24 @@ def history(update, context):
                 history_text = f"История общения в чате {chat_id}:\n"
                 for msg in history_messages:
                     history_text += f"🕒 {msg['time']} | От: {msg['sender']} | Сообщение: {msg['text']}\n"
-                update.message.reply_text(history_text)
+                await update.message.reply_text(history_text)
             else:
-                update.message.reply_text(f'Нет сообщений в чате {chat_id} или произошла ошибка.')
+                await update.message.reply_text(f'Нет сообщений в чате {chat_id} или произошла ошибка.')
         else:
-            update.message.reply_text('Не удалось получить токен Авито.')
+            await update.message.reply_text('Не удалось получить токен Авито.')
     except Exception as e:
         logging.error(f"Ошибка в команде /history: {e}")
-        update.message.reply_text(f'Ошибка: {e}')
+        await update.message.reply_text(f'Ошибка: {e}')
 
-def button_callback(update, context):
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    query.answer()
+    await query.answer()
     data = query.data
     chat_id = data.split('_')[1]
     
     if data.startswith('reply_'):
         logging.info(f"Кнопка 'Ответить' нажата для чата {chat_id}")
-        query.message.reply_text(
+        await query.message.reply_text(
             f'Введите ответ для чата {chat_id} с помощью команды:\n'
             f'/reply {chat_id} <ваше сообщение>'
         )
@@ -268,59 +270,70 @@ def button_callback(update, context):
                 history_text = f"История общения в чате {chat_id}:\n"
                 for msg in history_messages:
                     history_text += f"🕒 {msg['time']} | От: {msg['sender']} | Сообщение: {msg['text']}\n"
-                query.message.reply_text(history_text)
+                await query.message.reply_text(history_text)
             else:
-                query.message.reply_text(f'Нет сообщений в чате {chat_id} или произошла ошибка.')
+                await query.message.reply_text(f'Нет сообщений в чате {chat_id} или произошла ошибка.')
         else:
-            query.message.reply_text('Не удалось получить токен Авито.')
+            await query.message.reply_text('Не удалось получить токен Авито.')
 
-# Основной цикл
-def main():
-    bot = Bot(token=TELEGRAM_TOKEN)
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
-    
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("reply", reply))
-    dp.add_handler(CommandHandler("history", history))
-    dp.add_handler(CallbackQueryHandler(button_callback, pattern='^(reply_|history_)'))
-    
-    try:
-        updater.start_polling()
-        logging.info("Бот Telegram запущен в режиме polling")
-    except Conflict as e:
-        logging.error(f"Конфликт Telegram API: {e}")
-        send_to_telegram(bot, {
-            'text': f"Ошибка: Конфликт Telegram API. Убедитесь, что только один экземпляр бота запущен.",
-            'timestamp': int(time.time())
-        }, is_system=True)
-        return
+# Обработка сигналов завершения
+def handle_exit(signum, frame):
+    logging.info("Получен сигнал завершения")
+    sys.exit(0)
 
+# Основная функция
+async def main() -> None:
+    # Создаем Application вместо Updater
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    bot = application.bot
+    
+    # Регистрируем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("reply", reply))
+    application.add_handler(CommandHandler("history", history))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern='^(reply_|history_)'))
+    
+    # Запускаем polling в фоне
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    logging.info("Бот Telegram запущен в режиме polling")
+    
+    # Основной цикл проверки сообщений Авито
     last_timestamp = int(time.time()) - 3600
     token_error_count = 0
+    
     while True:
         token = get_avito_token()
         if token:
             token_error_count = 0
             new_messages, last_timestamp = get_avito_messages(token, last_timestamp)
             for msg in new_messages:
-                send_to_telegram(bot, msg)
+                await send_to_telegram(bot, msg)
         else:
             token_error_count += 1
             if token_error_count <= 3:
-                send_to_telegram(bot, {
+                await send_to_telegram(bot, {
                     'text': 'Ошибка: Не удалось получить токен Авито',
                     'timestamp': int(time.time())
                 }, is_system=True)
-        time.sleep(60)
+        await asyncio.sleep(60)
 
 if __name__ == '__main__':
+    # Регистрируем обработчики сигналов
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
+    
     try:
-        main()
+        asyncio.run(main())
     except Exception as e:
         logging.error(f"Общая ошибка: {e}")
+        # Создаем временного бота для отправки сообщения об ошибке
         bot = Bot(token=TELEGRAM_TOKEN)
-        send_to_telegram(bot, {
-            'text': f'Ошибка бота: {e}',
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_to_telegram(bot, {
+            'text': f'Критическая ошибка бота: {e}',
             'timestamp': int(time.time())
-        }, is_system=True)
+        }, is_system=True))
+        loop.close()
