@@ -180,7 +180,7 @@ def get_avito_token():
 
 # Получение новых сообщений с Авито
 def get_avito_messages(token, last_timestamp):
-    url = f'https://api.avito.ru/messenger/v3/accounts/{AVITO_USER_ID}/chats'
+    url = f'https://api.avito.ru/messenger/v2/accounts/{AVITO_USER_ID}/chats'
     headers = {'Authorization': f'Bearer {token}'}
     try:
         response = requests.get(url, headers=headers, timeout=30)
@@ -253,7 +253,7 @@ def get_avito_chat_history(token, chat_id):
 async def send_avito_message(token, chat_id, message):
     url = f'https://api.avito.ru/messenger/v1/accounts/{AVITO_USER_ID}/chats/{chat_id}/messages'
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-    data = {'type': 'text', 'message': message}
+    data = {"message": {},"type": "text"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data) as response:
