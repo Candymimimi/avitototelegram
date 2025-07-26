@@ -27,7 +27,9 @@ def health_check():
     return jsonify(status="ok"), 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=8080)
+    from waitress import serve  # Добавляем production-ready сервер
+    logging.basicConfig(level=logging.INFO)
+    serve(app, host='0.0.0.0', port=8080)
 
 # ... (остальной код)
 
@@ -252,8 +254,18 @@ def get_avito_chat_history(token, chat_id):
 # Отправка ответа на Авито
 async def send_avito_message(token, chat_id, message):
     url = f'https://api.avito.ru/messenger/v1/accounts/{AVITO_USER_ID}/chats/{chat_id}/messages'
-    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-    data = {"message": {},"type": "text"}
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.avito.messenger+json; version=1'
+    }
+    # Исправленный формат данных согласно документации Avito
+    data = {
+        "content": {
+            "type": "text",
+            "text": message
+        }
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=data) as response:
@@ -261,8 +273,9 @@ async def send_avito_message(token, chat_id, message):
                     logging.info(f"Ответ успешно отправлен в чат {chat_id}: {message}")
                     return True
                 else:
+                    # Добавляем вывод тела ответа для диагностики
                     error_text = await response.text()
-                    logging.error(f"Ошибка API Авито: {response.status} - {error_text}")
+                    logging.error(f"Ошибка API Авито ({response.status}): {error_text}")
                     return False
     except Exception as e:
         logging.error(f"Исключение при отправке сообщения на Авито: {e}")
@@ -276,23 +289,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         args = context.args
+        logging.info(f"Команда /reply получена: args={args}")
+        
         if len(args) < 2:
             await update.message.reply_text('Использование: /reply <chat_id> <сообщение>')
+            logging.warning("Недостаточно аргументов для команды /reply")
             return
+        
         chat_id = args[0]
         message = ' '.join(args[1:])
+        logging.info(f"Попытка отправить в чат {chat_id}: {message}")
+        
         token = get_avito_token()
         if token:
             success = await send_avito_message(token, chat_id, message)
             if success:
-                await update.message.reply_text(f'Ответ отправлен в чат {chat_id}: {message}')
+                await update.message.reply_text(f'✅ Ответ отправлен в чат {chat_id}')
+                logging.info(f"Ответ успешно отправлен на Avito")
             else:
-                await update.message.reply_text('Ошибка при отправке ответа на Авито. Проверьте лог.')
+                await update.message.reply_text('❌ Ошибка при отправке ответа на Авито. Проверьте лог.')
+                logging.error("Не удалось отправить ответ через API Avito")
         else:
-            await update.message.reply_text('Не удалось получить токен Авито.')
+            await update.message.reply_text('⚠️ Не удалось получить токен Авито.')
+            logging.error("Токен Avito не получен")
     except Exception as e:
-        logging.error(f"Ошибка в команде /reply: {e}")
-        await update.message.reply_text(f'Ошибка: {e}')
+        logging.exception(f"Критическая ошибка в команде /reply: {e}")
+        await update.message.reply_text(f'🚨 Ошибка: {str(e)}')
 
 async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
